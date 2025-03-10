@@ -122,7 +122,7 @@ impl SAM2ImagePredictor {
         let masks =
             bilinear_interpolate_tensor(&low_res_masks, original_img_size.0, original_img_size.1)?;
         let masks = masks.gt(mask_threshold)?;
-        let masks = masks.chunk(masks.dim(0)?, 0)?;
+        let masks = masks.chunk(masks.dim(1)?, 1)?;
         // [1, 1, h, w] => [h, w]
         let masks = masks
             .into_iter()
