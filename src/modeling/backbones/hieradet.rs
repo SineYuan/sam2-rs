@@ -165,9 +165,9 @@ impl MultiScaleAttention {
             .forward(x)?
             .reshape((b, total_tokens, 3, self.num_heads, head_dim))?;
 
-        let q = qkv.narrow(2, 0, 1)?.squeeze(2)?; // 提取第 0 个维度
-        let k = qkv.narrow(2, 1, 1)?.squeeze(2)?; // 提取第 1 个维度
-        let v = qkv.narrow(2, 2, 1)?.squeeze(2)?; // 提取第 2 个维度
+        let q = qkv.narrow(2, 0, 1)?.squeeze(2)?;
+        let k = qkv.narrow(2, 1, 1)?.squeeze(2)?;
+        let v = qkv.narrow(2, 2, 1)?.squeeze(2)?;
 
         let (mut h_new, mut w_new) = (h, w);
 
@@ -317,9 +317,9 @@ impl MultiScaleBlock {
 
         if self.pool_size.is_some() {
             window_size /= self.pool_size.unwrap().0;
-            let dims = shortcut.dims4()?; // 获取新的维度
-            h = dims.1; // 第二个维度是高度
-            w = dims.2; // 第三个维度是宽度
+            let dims = shortcut.dims4()?;
+            h = dims.1;
+            w = dims.2;
             pad_h = (window_size - h % window_size) % window_size;
             pad_w = (window_size - w % window_size) % window_size;
             pad_h += h;

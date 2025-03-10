@@ -1362,25 +1362,17 @@ impl SAM2Base {
             )?;
 
 
-        // 3. 新增：处理NO_OBJ_SCORE逻辑
         let low_res_multimasks = if self.ext_config.pred_obj_scores {
-            // 生成条件掩码 [B,]
             let is_obj_appearing = object_score_logits.gt(0.0)?;
 
-            // 将条件扩展为 [B, 1, 1, 1] 以便广播
-            //let mask = is_obj_appearing
-            //    .unsqueeze(1)?
-            //    .unsqueeze(2)?;
             let mask = is_obj_appearing.broadcast_as(low_res_multimasks_.shape())?;
 
-            // 创建替换值张量
             let no_obj_tensor = Tensor::full(
                 NO_OBJ_SCORE,
                 low_res_multimasks_.shape(),
                 low_res_multimasks_.device(),
             )?;
 
-            // 执行条件替换
             mask.where_cond(&low_res_multimasks_, &no_obj_tensor)?
         } else {
             low_res_multimasks_
@@ -1392,9 +1384,6 @@ impl SAM2Base {
 
         // 4. Select best masks based on IoU
         let (low_res_masks, high_res_masks) = if multimask_output {
-            let b = low_res_multimasks.dim(0)?;
-            //let best_iou_inds = ious.argmax(D::Minus1)?;
-            //let batch_inds = Tensor::arange(0, b as u32, low_res_masks.device())?.to_dtype(DType::U32)?;
 
             let best_iou_inds = ious.argmax(1)?;
             let idx = best_iou_inds.unsqueeze(1)?.unsqueeze(2)?;
@@ -1463,8 +1452,6 @@ impl SAM2Base {
         object_score_logits: &Tensor,
 
         run_mem_encoder: bool,
-        //high_res_masks,
-        //object_score_logits,
     ) -> Result<Option<(Tensor, Tensor)>> {
         if run_mem_encoder && self.num_maskmem > 0 {
             let mem_out = self._encode_new_memory(
@@ -1488,7 +1475,7 @@ impl SAM2Base {
         object_score_logits: &Tensor,
         is_mask_from_pts: bool,
     ) -> Result<(Tensor, Tensor)> {
-        // 获取最后一个层级的视觉特征
+        // use last layer
         let last_feat = current_vision_feats
             .last()
             .ok_or(candle_core::Error::Msg(format!(
@@ -1503,10 +1490,9 @@ impl SAM2Base {
                 "Feature size does not match H*W"
             )));
         }
-        // 调整形状: (S, B, C) -> (B, C, H, W)
+        // (S, B, C) -> (B, C, H, W)
         let pix_feat = last_feat.permute((1, 2, 0))?.reshape((b, c, *h, *w))?;
 
-        // 应用非重叠约束（如果需要）
         //let masks = if self.non_overlap_masks_for_mem_enc && !self.training {
         //    apply_non_overlapping_constraints(high_res_masks)?
         //} else {
@@ -1514,7 +1500,6 @@ impl SAM2Base {
         //};
         let masks = high_res_masks.clone();
 
-        // 处理Sigmoid或二值化
         let binarize = self.ext_config.binarize_mask_from_pts_for_mem_enc && is_mask_from_pts;
         let mask_for_mem = if binarize {
             masks.gt(0.0)?.to_dtype(DType::F32)?
@@ -1522,7 +1507,6 @@ impl SAM2Base {
             candle_nn::ops::sigmoid(&masks)?
         };
 
-        // 应用比例和偏置
         let mask_for_mem = if self.ext_config.sigmoid_scale_for_mem_enc != 1.0 {
             mask_for_mem.broadcast_mul(&Tensor::new(
                 self.ext_config.sigmoid_scale_for_mem_enc,
@@ -1545,12 +1529,10 @@ impl SAM2Base {
             last_feat.device(),
         )?)?;
 
-        // 调用记忆编码器
         let (mut maskmem_features, maskmem_pos_enc) =
             self.memory_encoder
                 .forward(&pix_feat, &mask_for_mem, true)?;
 
-        // 处理无对象嵌入
         if let Some(no_obj_embed) = &self.no_obj_embed_spatial {
             let is_obj_appearing = object_score_logits.gt(0.0)?;
             let is_obj_appearing = is_obj_appearing.to_dtype(DType::F32)?;
@@ -1559,7 +1541,7 @@ impl SAM2Base {
             let one = Tensor::new(1.0, object_score_logits.device())?;
             let no_obj_factor = one.sub(&is_obj_appearing)?;
 
-            // 扩展无对象嵌入到匹配的维度
+            // expend
             let no_obj_embed = no_obj_embed.unsqueeze(0)?.unsqueeze(2)?.unsqueeze(3)?; // 1,C,1,1
             let no_obj_embed = no_obj_embed.broadcast_as(maskmem_features.shape())?; // B,C,H,W
 
@@ -1569,9 +1551,8 @@ impl SAM2Base {
         Ok((maskmem_features, maskmem_pos_enc))
     }
 
+    // Whether to use multimask output in the SAM head
     fn _use_multimask(&self, is_init_cond_frame: bool, num_pts: usize) -> bool {
-        // Whether to use multimask output in the SAM head
-
         let multimask_output = (self.ext_config.multimask_output_in_sam
             && (is_init_cond_frame || self.ext_config.multimask_output_for_tracking)
             && (self.ext_config.multimask_min_pt_num <= num_pts)
@@ -1591,23 +1572,23 @@ fn select_closest_cond_frames<'a>(
     let mut selected = BTreeMap::new();
     let mut unselected = BTreeMap::new();
 
-    // 处理无需选择的情况
+    // Handle case where no selection is needed
     if max_count == usize::MAX || cond_frames.len() <= max_count {
         selected.extend(cond_frames.iter().map(|(t, out)| (*t, out)));
         return (selected, unselected);
     }
 
-    // 利用BTreeMap的有序特性快速查找最近帧
-    // 寻找最近前帧 (最大的小于current_frame的键)
+    // Use BTreeMap's ordered nature to find closest frames efficiently
+    // Find closest previous frame (largest key less than current_frame)
     let closest_before = cond_frames
         .range(..current_frame)
         .next_back()
         .map(|(t, _)| *t);
 
-    // 寻找最近后帧 (最小的大于等于current_frame的键)
+    // Find closest next frame (smallest key greater than or equal to current_frame)
     let closest_after = cond_frames.range(current_frame..).next().map(|(t, _)| *t);
 
-    // 插入最近前后帧（直接使用引用）
+    // Insert closest previous/next frames (direct references)
     if let Some(t) = closest_before {
         selected.insert(t, cond_frames.get(&t).unwrap());
     }
@@ -1615,7 +1596,7 @@ fn select_closest_cond_frames<'a>(
         selected.insert(t, cond_frames.get(&t).unwrap());
     }
 
-    // 收集剩余候选帧（利用BTreeMap有序性优化）
+    // Collect remaining candidates (using ordered property for efficiency)
     let remaining: Vec<_> = cond_frames
         .iter()
         .filter(|(&t, _)| {
@@ -1623,7 +1604,7 @@ fn select_closest_cond_frames<'a>(
         })
         .collect();
 
-    // 按时间差排序并选择
+    // Sort by temporal distance and select top candidates
     let mut candidates: Vec<_> = remaining
         .into_iter()
         .map(|(t, out)| ((current_frame as isize - *t as isize).abs(), t, out))
@@ -1635,7 +1616,7 @@ fn select_closest_cond_frames<'a>(
         selected.insert(*t, out);
     }
 
-    // 填充未选中的帧
+    // Populate unselected frames
     for (t, out) in cond_frames.iter() {
         if !selected.contains_key(t) {
             unselected.insert(*t, out);

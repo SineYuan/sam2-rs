@@ -35,7 +35,6 @@ impl Default for ObjectState {
     }
 }
 
-// 状态管理结构
 pub struct InferenceState {
     frame_loader: Box<dyn FrameLoader>,
 
@@ -201,8 +200,6 @@ impl SAM2VideoPredictor {
             compute_device
         };
 
-        // 加载视频帧
-        //let (images, video_height, video_width) = load_video_frames(video_path, video_device)?;
         let (video_height, video_width) = frame_loader.frame_size();
 
         let num_frames = frame_loader.total_frames();
@@ -226,20 +223,18 @@ impl SAM2VideoPredictor {
             obj_id_counter: 0,
         };
 
-        // 预热第一帧的特征
+        // preheat first frame
         let img_size = self.base.get_image_size();
         let img_tensor = state.get_frame(0, (img_size, img_size))?;
         self.get_image_feature(Some(&img_tensor), &mut state.cached_features, 0)?;
         Ok(state)
     }
 
-    // 实现对象ID映射方法
     fn obj_id_to_idx(&self, state: &mut InferenceState, obj_id: usize) -> usize {
         if let Some(&idx) = state.obj_id_to_idx.get(&obj_id) {
             return idx;
         }
 
-        // 分配新索引（保持插入顺序）
         let new_idx = state.obj_id_to_idx.len();
         state.obj_id_to_idx.insert(obj_id, new_idx);
         state.obj_idx_to_id.insert(new_idx, obj_id);
@@ -289,7 +284,6 @@ impl SAM2VideoPredictor {
         prompts: &[Prompt],
         clear_old_points: bool,
     ) -> Result<Vec<ObjectMask>> {
-        // 参数校验
         let has_box = prompts.iter().any(|p| matches!(p, Prompt::Box(_, _, _, _)));
         if has_box && !clear_old_points {
             return Err(candle_core::Error::Msg(
@@ -299,7 +293,6 @@ impl SAM2VideoPredictor {
 
         let obj_idx = self.obj_id_to_idx(state, obj_id);
 
-        // 归一化坐标
         let video_w = state.video_width;
         let video_h = state.video_height;
 
@@ -353,7 +346,6 @@ impl SAM2VideoPredictor {
 
         let obj_state = state.objects.get(&obj_idx).unwrap();
 
-        // 运行单帧推理
         let current_out = {
             self.run_single_frame_inference(
                 img_features,
@@ -379,8 +371,6 @@ impl SAM2VideoPredictor {
                 .insert(frame_idx, current_out);
         };
 
-        //storage_key = "cond_frame_outputs" if is_cond else "non_cond_frame_outputs"
-
         let out = self._consolidate_temp_output_across_obj(&state, frame_idx, is_cond, true)?;
 
         let (_, video_res_masks) = self._get_orig_video_res_output(&state, &out)?;
@@ -402,7 +392,6 @@ impl SAM2VideoPredictor {
         Ok(obj_masks)
     }
 
-    // 调整后的推理方法
     fn run_single_frame_inference(
         &self,
         img_features: (Vec<Tensor>, Vec<Tensor>, Vec<(usize, usize)>),
@@ -447,7 +436,6 @@ impl SAM2VideoPredictor {
         let batch_size = inference_state.obj_idx_to_id.len();
         let storage_key = if is_cond { "cond" } else { "non_cond" };
 
-        // 确定输出分辨率
         let (h, w) = if consolidate_at_video_res {
             (inference_state.video_height, inference_state.video_width)
         } else {
@@ -455,7 +443,6 @@ impl SAM2VideoPredictor {
             (size, size)
         };
 
-        // 初始化合并后的mask张量
         let mut consolidated = Tensor::full(
             NO_OBJ_SCORE,
             (batch_size, 1, h, w),
@@ -482,21 +469,18 @@ impl SAM2VideoPredictor {
             if let Some(frame_out) = mask {
                 let mut mask_tensor = frame_out.pred_masks.clone();
 
-                // 调整分辨率
                 if mask_tensor.dim(D::Minus2)? != h || mask_tensor.dim(D::Minus1)? != w {
                     mask_tensor = bilinear_interpolate_tensor(&mask_tensor, h, w)?;
                 }
 
-                // 设备对齐
                 mask_tensor = mask_tensor.to_device(&inference_state.storage_device)?;
 
-                // 更新合并后的张量
                 consolidated = consolidated.slice_assign(
                     &[
-                        obj_idx..obj_idx + 1, // 第0维：当前对象
-                        0..1,                 // 第1维：单通道
-                        0..h,                 // 第2维：全高度
-                        0..w,                 // 第3维：全宽度
+                        obj_idx..obj_idx + 1, 
+                        0..1,
+                        0..h,
+                        0..w,
                     ],
                     &mask_tensor.reshape((1, 1, h, w))?,
                 )?;
@@ -534,7 +518,6 @@ impl SAM2VideoPredictor {
     }
 
     pub fn propagate_in_video_preflight(&self, state: &mut InferenceState) -> Result<()> {
-        // 检查是否有对象
         let batch_size = state.obj_idx_to_id.len();
         if batch_size == 0 {
             return Err(candle_core::Error::Msg(format!(
@@ -542,15 +525,12 @@ impl SAM2VideoPredictor {
             )));
         }
 
-        // 遍历所有对象
         for obj_idx in 0..batch_size {
-            // 获取临时输出和主输出
 
             let obj_state = state.objects.get_mut(&obj_idx).ok_or_else(|| {
                 candle_core::Error::Msg(format!("object index {} not found!", obj_idx))
             })?;
 
-            // 处理条件帧和非条件帧
             for is_cond in &[true, false] {
                 let storage_key = if *is_cond {
                     &mut obj_state.temp_cond_frame_outputs
@@ -558,14 +538,11 @@ impl SAM2VideoPredictor {
                     &mut obj_state.temp_non_cond_frame_outputs
                 };
 
-                // 遍历临时帧输出
                 let frame_indices: Vec<usize> = storage_key.keys().cloned().collect();
                 for frame_idx in frame_indices {
                     let mut out: FrameOutput = storage_key.remove(&frame_idx).unwrap();
 
-                    // 生成内存特征
                     if out.maskmem_features.is_none() {
-                        // 插值操作
 
                         let high_res_masks = bilinear_interpolate_tensor(
                             &out.pred_masks.to_device(&state.device)?,
@@ -573,7 +550,6 @@ impl SAM2VideoPredictor {
                             self.base.get_image_size(),
                         )?;
 
-                        // 调用内存编码核心逻辑
                         let (vision_feats, pos_enc, feat_sizes) = {
                             let img_size = self.base.get_image_size();
                             let img_tensor = state.frame_loader.get_frame(
@@ -595,7 +571,6 @@ impl SAM2VideoPredictor {
                             true,
                         )?;
 
-                        // 转换存储类型
                         out.maskmem_features = Some((
                             maskmem_features
                                 .to_dtype(DType::BF16)?
@@ -605,7 +580,6 @@ impl SAM2VideoPredictor {
                         ));
                     }
 
-                    // 存入主输出
                     let target_map = if *is_cond {
                         &mut obj_state.cond_frame_outputs
                     } else {
@@ -613,14 +587,12 @@ impl SAM2VideoPredictor {
                     };
                     target_map.insert(frame_idx, out);
 
-                    // 清理周围非条件内存
                     //if self.clear_non_cond_mem_around_input {
                     //    self.clear_non_cond_mem_around(state, frame_idx, obj_idx)?;
                     //}
                 }
             }
 
-            // 最终检查条件帧
             if obj_state.cond_frame_outputs.is_empty() {
                 let obj_id = state.obj_idx_to_id.get(&obj_idx).unwrap();
                 return Err(candle_core::Error::Msg(format!(
@@ -629,7 +601,7 @@ impl SAM2VideoPredictor {
                 )));
             }
 
-            // 清理重复的非条件帧
+            // clean non_cond_frame_outputs
             for frame_idx in obj_state.cond_frame_outputs.keys() {
                 obj_state.non_cond_frame_outputs.remove(frame_idx);
             }
@@ -651,7 +623,6 @@ impl SAM2VideoPredictor {
         let batch_size = inference_state.obj_idx_to_id.len();
         let mut results = Vec::new();
 
-        // 确定起始帧和结束帧
         let start_frame_idx = start_frame_idx.unwrap_or_else(|| {
             inference_state
                 .objects
@@ -684,7 +655,6 @@ impl SAM2VideoPredictor {
                     .get_mut(&obj_idx)
                     .ok_or_else(|| candle_core::Error::Msg("Object state not found".to_string()))?;
 
-                // 检查是否已经存在条件帧输出
                 if let Some(current_out) = obj_state
                     .cond_frame_outputs
                     .get(&frame_idx)
@@ -710,7 +680,6 @@ impl SAM2VideoPredictor {
                             frame_idx,
                         )?
                     };
-                    // 运行单帧推理
                     let current_out = self.run_single_frame_inference(
                         img_features,
                         &obj_state,
@@ -725,7 +694,6 @@ impl SAM2VideoPredictor {
                     let pred_masks = current_out.pred_masks.to_device(&inference_state.device)?;
                     pred_masks_per_obj.push(pred_masks);
 
-                    // 存储到非条件帧输出
                     obj_state
                         .non_cond_frame_outputs
                         .insert(frame_idx, current_out);
@@ -739,12 +707,10 @@ impl SAM2VideoPredictor {
                     .insert(frame_idx, reverse);
             }
 
-            // 合并所有对象的预测掩码
             let all_pred_masks = Tensor::cat(&pred_masks_per_obj, 0)?;
             let (_, video_res_masks) =
                 self._get_orig_video_res_output(inference_state, &all_pred_masks)?;
 
-            // 收集结果：帧索引、对象ID列表、掩码张量
             let obj_ids = inference_state
                 .obj_idx_to_id
                 .values()
@@ -781,7 +747,6 @@ impl SAM2VideoPredictor {
     }
 }
 
-// 定义 trait
 pub trait FrameLoader {
     fn get_frame(
         &self,
@@ -803,7 +768,6 @@ impl ImageLoader {
         let mut image_paths = Vec::new();
         let supported_extensions = ["jpg", "jpeg", "png", "gif", "bmp", "webp"];
 
-        // 读取目录并收集图片路径
         let entries = std::fs::read_dir(folder_path)
             .map_err(|e| candle_core::Error::wrap(format!("read dir fail: {e}")))?;
 
@@ -821,14 +785,12 @@ impl ImageLoader {
             }
         }
 
-        // 检查至少存在一张图片
         if image_paths.is_empty() {
             return Err(candle_core::Error::msg("no image found"));
         }
 
         image_paths.sort();
 
-        // 加载第一张图片获取基准尺寸
         let first_img = image::open(&image_paths[0])
             .map_err(|e| candle_core::Error::wrap(format!("load first frame fail: {e}")))?;
         let base_dimensions = first_img.dimensions();
@@ -839,12 +801,10 @@ impl ImageLoader {
         })
     }
 
-    /// 获取总帧数
     pub fn len(&self) -> usize {
         self.image_paths.len()
     }
 
-    /// 检查是否为空
     pub fn is_empty(&self) -> bool {
         self.image_paths.is_empty()
     }
@@ -857,16 +817,13 @@ impl FrameLoader for ImageLoader {
         target_size: (usize, usize),
         device: &Device,
     ) -> Result<Tensor> {
-        // 检查索引有效性
         let path = self.image_paths.get(index).ok_or_else(|| {
             candle_core::Error::msg(format!("index {index} out of bound（total: {}）", self.len()))
         })?;
 
-        // 加载图片
         let img = image::open(path)
             .map_err(|e| candle_core::Error::wrap(format!("frame load fail: {e}")))?;
 
-        // 验证尺寸一致性
         let current_dims = img.dimensions();
         if current_dims != self.base_dimensions {
             return Err(candle_core::Error::msg(format!(

@@ -4,7 +4,6 @@ use candle_nn::{Activation, Conv2d, Conv2dConfig, Linear, VarBuilder};
 use crate::modeling::position_encoding::PositionEmbeddingSine;
 use crate::modeling::sam_utils::{DropPath, LayerNorm2d};
 
-// MaskDownSampler实现
 pub struct MaskDownSampler {
     encoder: Vec<Conv2d>,
     norms: Vec<LayerNorm2d>,
@@ -86,7 +85,6 @@ impl Module for MaskDownSampler {
     }
 }
 
-// CXBlock实现
 struct CXBlock {
     dwconv: Conv2d,
     norm: LayerNorm2d,
@@ -147,7 +145,6 @@ impl CXBlock {
         let pwconv1 = candle_nn::linear(dim, 4 * dim, vb.pp("pwconv1"))?;
         let pwconv2 = candle_nn::linear(4 * dim, dim, vb.pp("pwconv2"))?;
         let gamma = if layer_scale_init_value > 0.0 {
-            // Some(Tensor::full(layer_scale_init_value, &[dim], vb.device())?)
             Some(vb.get((dim), "gamma")?)
         } else {
             None
@@ -172,7 +169,6 @@ impl Module for CXBlock {
         let mut x = self.dwconv.forward(x)?;
         x = self.norm.forward(&x)?;
 
-        // Permute处理
         let (n, c, h, w) = x.dims4()?;
         x = x.permute((0, 2, 3, 1))?.contiguous()?;
         x = self.pwconv1.forward(&x)?;
@@ -192,7 +188,6 @@ impl Module for CXBlock {
     }
 }
 
-// Fuser实现
 pub struct Fuser {
     proj: Option<Conv2d>,
     layers: Vec<CXBlock>,
@@ -247,7 +242,6 @@ impl Module for Fuser {
     }
 }
 
-// MemoryEncoder实现
 pub struct MemoryEncoder {
     mask_downsampler: MaskDownSampler,
     pix_feat_proj: Conv2d,

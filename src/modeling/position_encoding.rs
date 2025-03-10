@@ -86,7 +86,7 @@ impl PositionEmbeddingSine {
         //let dimt_t = (self.temperature.powf(2.0 * (dim_t.div(2).floor() as f64) / self.num_pos_feats as f64))?;
         let base = Tensor::new(self.temperature, &x.device())?;
         let divisor = Tensor::new(self.num_pos_feats as f32, &x.device())?;
-        let dim_t = base.broadcast_pow(&dim_t)?.broadcast_div(&divisor)?; // 逐元素幂运算
+        let dim_t = base.broadcast_pow(&dim_t)?.broadcast_div(&divisor)?;
 
         let pos_x = x_embed.unsqueeze(1)?.broadcast_div(&dim_t)?;
         let pos_y = y_embed.unsqueeze(1)?.broadcast_div(&dim_t)?;

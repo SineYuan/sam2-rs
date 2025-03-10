@@ -37,7 +37,7 @@ impl DropPath {
             .chain(std::iter::repeat(1).take(x.ndim()? - 1))
             .collect::<Vec<usize>>();
 
-        // 生成随机张量 (bernoulli 分布)
+        // (bernoulli distribution)
         let random_tensor = Tensor::rand(0.0..1.0, shape, x.device())?
             .ge(keep_prob)?
             .to_dtype(DType::F32)?;

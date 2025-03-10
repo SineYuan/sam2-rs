@@ -56,23 +56,22 @@ impl SAM2ImagePredictor {
 
         let mut feats: Vec<Tensor> = vision_feats
             .into_iter()
-            .rev() // 反转列表对应 [::-1]
-            .zip(self.bb_feat_sizes.iter().rev()) // 对应 zip 逆序
+            .rev() // [::-1]
+            .zip(self.bb_feat_sizes.iter().rev()) 
             .map(|(mut feat, &(h, w))| {
-                // Permute 操作 (1, 2, 0)
+                // Permute (1, 2, 0)
                 feat = feat.permute((1, 2, 0))?;
 
-                // View 操作: 1 × (C×H×W) × H_size × W_size
-                // 原始形状假设为 (C, H, W), 经过 permute 后变为 (H, W, C)
+                // View: 1 × (C×H×W) × H_size × W_size
+                // (C, H, W) -> (H, W, C)
                 let (dim0, c, hw) = feat.shape().dims3()?;
                 feat.reshape((1, c, h, w))
             })
             .collect::<Result<Vec<_>>>()?;
 
-        // 再次反转列表对应 [::-1]
+        // reverse  feats[::-1]
         feats.reverse();
 
-        // 构建特征字典
         let image_embed = feats.last().unwrap().clone();
         let high_res_feats = feats[..feats.len() - 1].to_vec();
         if high_res_feats.len() != 2 {
